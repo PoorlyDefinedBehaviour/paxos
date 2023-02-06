@@ -229,7 +229,7 @@ impl Paxos {
                 }
                 Message::Prepare { id, answer_tx } => {
                     let result = self.acceptor_handle_prepare(id).await;
-                    dbg!(&result);
+
                     if let Err(err) = answer_tx.send(result) {
                         eprintln!("handling prepare message: unable to send result to channel. error={err:?}");
                     }
@@ -240,7 +240,7 @@ impl Paxos {
                     answer_tx,
                 } => {
                     let result = self.acceptor_handle_propose(id, value).await;
-                    dbg!(&result);
+
                     if let Err(err) = answer_tx.send(result) {
                         eprintln!("handling propose message: unable to send result to channel. error={err:?}");
                     }
@@ -250,7 +250,7 @@ impl Paxos {
     }
 
     // Proposer: PREPARE phase
-    async fn prepare(&self, id: u64, value: String) -> Result<()> {
+    async fn prepare(&mut self, id: u64, value: String) -> Result<()> {
         let prepare_request = PrepareRequest { id };
 
         let futures = self.config.cluster_members.iter().map(|addr| {
@@ -275,7 +275,7 @@ impl Paxos {
                 Ok(v) => v,
             };
 
-            if !dbg!(response.status()).is_success() {
+            if !response.status().is_success() {
                 continue;
             }
 
@@ -289,10 +289,17 @@ impl Paxos {
         }
 
         // Add 1 to take this process into account.
-        if dbg!(success_responses.len()) + 1 < self.majority() {
+        if success_responses.len() + 1 < self.majority() {
             return Err(anyhow!(
                 "prepare request: did not get response from the majority"
             ));
+        }
+
+        for response in success_responses.iter() {
+            if response.accepted_id >= id {
+                self.id = response.accepted_id + 1;
+                return Err(anyhow!("got a response with a higher id"));
+            }
         }
 
         let response_with_max_accepted_id = success_responses
